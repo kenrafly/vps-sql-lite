@@ -21,13 +21,14 @@ A full-stack Next.js application for uploading and managing images with PostgreS
 
 ## Prerequisites
 
-- Node.js 18+ 
+- Node.js 18+
 - PostgreSQL 12+
 - npm or yarn
 
 ## Quick Start
 
 1. **Clone and install:**
+
    ```bash
    git clone <your-repo>
    cd practice
@@ -35,16 +36,19 @@ A full-stack Next.js application for uploading and managing images with PostgreS
    ```
 
 2. **Setup PostgreSQL:**
+
    - Install PostgreSQL if not already installed
    - Create database: `CREATE DATABASE image_gallery;`
    - Update `.env.local` with your PostgreSQL credentials
 
 3. **Test database connection:**
+
    ```bash
    npm run test-db
    ```
 
 4. **Start the app:**
+
    ```bash
    npm run dev
    ```

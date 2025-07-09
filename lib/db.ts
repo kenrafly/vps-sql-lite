@@ -1,5 +1,4 @@
-import Database from "better-sqlite3";
-import path from "path";
+import { Pool, PoolClient } from "pg";
 
 // Database record interface
 export interface ImageRecord {
@@ -9,135 +8,166 @@ export interface ImageRecord {
   created_at: string;
 }
 
-// Create SQLite database file in the project root
-const dbPath = path.join(process.cwd(), "database.sqlite");
-const db = new Database(dbPath);
+// Create PostgreSQL connection pool
+const pool = new Pool({
+  user: process.env.POSTGRES_USER || "postgres",
+  host: process.env.POSTGRES_HOST || "localhost",
+  database: process.env.POSTGRES_DB || "image_gallery",
+  password: process.env.POSTGRES_PASSWORD || "password",
+  port: parseInt(process.env.POSTGRES_PORT || "5433"),
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
 
 // Initialize the database table
-export function initDatabase() {
+export async function initDatabase(): Promise<void> {
+  const client: PoolClient = await pool.connect();
   try {
-    db.exec(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS images (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         title TEXT NOT NULL,
         image_path TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('SQLite database table "images" is ready');
-    return Promise.resolve();
+    console.log('PostgreSQL database table "images" is ready');
   } catch (error) {
-    console.error("Error initializing SQLite database:", error);
-    return Promise.reject(error);
+    console.error("Error initializing PostgreSQL database:", error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
 // Insert a new image record
-export function insertImage(
+export async function insertImage(
   title: string,
   imagePath: string
 ): Promise<ImageRecord> {
+  const client: PoolClient = await pool.connect();
   try {
-    const stmt = db.prepare(
-      "INSERT INTO images (title, image_path) VALUES (?, ?)"
+    const result = await client.query(
+      "INSERT INTO images (title, image_path) VALUES ($1, $2) RETURNING *",
+      [title, imagePath]
     );
-    const result = stmt.run(title, imagePath);
 
-    // Get the inserted record
-    const getStmt = db.prepare("SELECT * FROM images WHERE id = ?");
-    const insertedRecord = getStmt.get(result.lastInsertRowid) as ImageRecord;
-
-    return Promise.resolve(insertedRecord);
+    return result.rows[0] as ImageRecord;
   } catch (error) {
-    console.error("Error inserting image into SQLite:", error);
-    return Promise.reject(error);
+    console.error("Error inserting image into PostgreSQL:", error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
 // Get all images
-export function getAllImages(): Promise<ImageRecord[]> {
+export async function getAllImages(): Promise<ImageRecord[]> {
+  const client: PoolClient = await pool.connect();
   try {
-    const stmt = db.prepare("SELECT * FROM images ORDER BY created_at DESC");
-    const rows = stmt.all() as ImageRecord[];
-    return Promise.resolve(rows);
+    const result = await client.query(
+      "SELECT * FROM images ORDER BY created_at DESC"
+    );
+    return result.rows as ImageRecord[];
   } catch (error) {
-    console.error("Error fetching images from SQLite:", error);
-    return Promise.reject(error);
+    console.error("Error fetching images from PostgreSQL:", error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
 // Update an image record
-export function updateImage(id: number, title: string): Promise<ImageRecord> {
+export async function updateImage(
+  id: number,
+  title: string
+): Promise<ImageRecord> {
+  const client: PoolClient = await pool.connect();
   try {
-    const stmt = db.prepare("UPDATE images SET title = ? WHERE id = ?");
-    const result = stmt.run(title, id);
+    const result = await client.query(
+      "UPDATE images SET title = $1 WHERE id = $2 RETURNING *",
+      [title, id]
+    );
 
-    if (result.changes === 0) {
-      return Promise.reject(new Error("Image not found"));
+    if (result.rows.length === 0) {
+      throw new Error("Image not found");
     }
 
-    // Get the updated record
-    const getStmt = db.prepare("SELECT * FROM images WHERE id = ?");
-    const updatedRecord = getStmt.get(id) as ImageRecord;
-
-    return Promise.resolve(updatedRecord);
+    return result.rows[0] as ImageRecord;
   } catch (error) {
-    console.error("Error updating image in SQLite:", error);
-    return Promise.reject(error);
+    console.error("Error updating image in PostgreSQL:", error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
 // Delete an image record
-export function deleteImage(id: number): Promise<ImageRecord> {
+export async function deleteImage(id: number): Promise<ImageRecord> {
+  const client: PoolClient = await pool.connect();
   try {
     // First get the image record to return the file path
-    const getStmt = db.prepare("SELECT * FROM images WHERE id = ?");
-    const imageRecord = getStmt.get(id) as ImageRecord;
+    const selectResult = await client.query(
+      "SELECT * FROM images WHERE id = $1",
+      [id]
+    );
 
-    if (!imageRecord) {
-      return Promise.reject(new Error("Image not found"));
+    if (selectResult.rows.length === 0) {
+      throw new Error("Image not found");
     }
+
+    const imageRecord = selectResult.rows[0] as ImageRecord;
 
     // Delete from database
-    const deleteStmt = db.prepare("DELETE FROM images WHERE id = ?");
-    const result = deleteStmt.run(id);
+    const deleteResult = await client.query(
+      "DELETE FROM images WHERE id = $1",
+      [id]
+    );
 
-    if (result.changes === 0) {
-      return Promise.reject(new Error("Failed to delete image"));
+    if (deleteResult.rowCount === 0) {
+      throw new Error("Failed to delete image");
     }
 
-    return Promise.resolve(imageRecord);
+    return imageRecord;
   } catch (error) {
-    console.error("Error deleting image from SQLite:", error);
-    return Promise.reject(error);
+    console.error("Error deleting image from PostgreSQL:", error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
 // Get a single image by ID
-export function getImageById(id: number): Promise<ImageRecord> {
+export async function getImageById(id: number): Promise<ImageRecord> {
+  const client: PoolClient = await pool.connect();
   try {
-    const stmt = db.prepare("SELECT * FROM images WHERE id = ?");
-    const image = stmt.get(id) as ImageRecord;
+    const result = await client.query("SELECT * FROM images WHERE id = $1", [
+      id,
+    ]);
 
-    if (!image) {
-      return Promise.reject(new Error("Image not found"));
+    if (result.rows.length === 0) {
+      throw new Error("Image not found");
     }
 
-    return Promise.resolve(image);
+    return result.rows[0] as ImageRecord;
   } catch (error) {
-    console.error("Error fetching image from SQLite:", error);
-    return Promise.reject(error);
+    console.error("Error fetching image from PostgreSQL:", error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
-// Close database connection when the process exits
+// Close database connection pool when the process exits
 process.on("exit", () => {
-  db.close();
+  pool.end();
 });
 
 process.on("SIGINT", () => {
-  db.close();
+  pool.end();
   process.exit(0);
 });
 
-export default db;
+export { pool };
+export default pool;
